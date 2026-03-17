@@ -182,18 +182,23 @@ int ConfigParser::readXmlFile(std::string const &filePath)
   std::ifstream ifs{filePath};
   PRECICE_CHECK(ifs, "XML parser was unable to open configuration file \"{}\"", filePath);
 
-  std::string content{std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>()};
+  _fileContent = std::string{std::istreambuf_iterator<char>(ifs), std::istreambuf_iterator<char>()};
+  _filePath    = filePath;
 
-  PRECICE_CHECK(!content.empty(), "The configuration file \"{}\" is empty.", filePath);
+  PRECICE_CHECK(!_fileContent.empty(), "The configuration file \"{}\" is empty.", filePath);
 
-  _hash = utils::preciceHash(content);
+  _hash = utils::preciceHash(_fileContent);
 
-  xmlParserCtxtPtr ctxt = xmlCreatePushParserCtxt(&SAXHandler, static_cast<void *>(this),
-                                                  content.c_str(), content.size(), nullptr);
+  _parserContext = xmlCreatePushParserCtxt(&SAXHandler, static_cast<void *>(this),
+                                           _fileContent.c_str(), _fileContent.size(), nullptr);
 
-  xmlParseChunk(ctxt, nullptr, 0, 1);
-  xmlFreeParserCtxt(ctxt);
+  xmlParseChunk(_parserContext, nullptr, 0, 1);
+  xmlFreeParserCtxt(_parserContext);
   xmlCleanupParser();
+
+  // Reset — context is invalid after xmlFreeParserCtxt
+  _parserContext = nullptr;
+  _fileContent.clear();
 
   return 0;
 }
@@ -257,8 +262,13 @@ void ConfigParser::connectTags(const ConfigurationContext &context, std::vector<
     pDefSubTag->resetAttributes();
 
     if ((pDefSubTag->_occurrence == XMLTag::OCCUR_ONCE) || (pDefSubTag->_occurrence == XMLTag::OCCUR_NOT_OR_ONCE)) {
-      PRECICE_CHECK(usedTags.count(pDefSubTag->_fullName) == 0,
-                    "Tag <{}> is not allowed to occur multiple times.", pDefSubTag->_fullName);
+      auto loc = getCurrentLocation();
+    std::string locationHint;
+    if (loc.line > 0) {
+      locationHint = fmt::format("\n{:4d} | {}", loc.line, loc.snippet);
+    }
+    PRECICE_CHECK(usedTags.count(pDefSubTag->_fullName) == 0,
+                  "Tag <{}> is not allowed to occur multiple times.{}", pDefSubTag->_fullName, locationHint);
       usedTags.emplace(pDefSubTag->_fullName);
     }
 
@@ -302,5 +312,26 @@ void ConfigParser::OnEndElement()
 void ConfigParser::OnTextSection(const std::string &)
 {
   // This page intentionally left blank
+}
+ConfigParser::XMLTagLocation ConfigParser::getCurrentLocation() const
+{
+  XMLTagLocation loc;
+  if (!_parserContext) return loc;
+
+  loc.line   = xmlSAX2GetLineNumber(_parserContext);
+  loc.column = xmlSAX2GetColumnNumber(_parserContext);
+
+  if (loc.line > 0 && !_fileContent.empty()) {
+    std::istringstream ss(_fileContent);
+    std::string        line;
+    long               n = 1;
+    while (std::getline(ss, line)) {
+      if (n++ == loc.line) {
+        loc.snippet = line;
+        break;
+      }
+    }
+  }
+  return loc;
 }
 } // namespace precice::xml

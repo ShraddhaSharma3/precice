@@ -2,10 +2,13 @@
 
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 #include "logging/Logger.hpp"
 #include "xml/XMLTag.hpp"
+#include <libxml/parser.h>
+#include <libxml/SAX2.h>
 
 namespace precice {
 namespace logging {
@@ -45,6 +48,15 @@ private:
 
   std::shared_ptr<precice::xml::XMLTag> m_pXmlTag;
 
+  /// Parser context — valid only during xmlParseChunk, null otherwise
+  xmlParserCtxtPtr _parserContext = nullptr;
+
+  /// Full file content saved for snippet extraction
+  std::string _fileContent;
+
+  /// File path for display in error messages
+  std::string _filePath;
+
 public:
   /// Parser ctor for Callback init
   ConfigParser(std::string_view filePath, const ConfigurationContext &context, std::shared_ptr<XMLTag> pXmlTag);
@@ -79,6 +91,16 @@ public:
 
   /// Proxy for error and warning messages from libxml2
   static void MessageProxy(int level, std::string_view mess);
+
+  /// Holds location info of the current XML tag being parsed
+  struct XMLTagLocation {
+    long        line    = -1;
+    long        column  = -1;
+    std::string snippet;
+  };
+
+  /// Returns the current line, column and source snippet from the parser
+  XMLTagLocation getCurrentLocation() const;
 };
 } // namespace xml
 } // namespace precice
